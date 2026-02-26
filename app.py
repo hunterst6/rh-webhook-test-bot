@@ -4,33 +4,34 @@ import datetime
 
 app = Flask(__name__)
 
-# Change this to a strong secret you create (used for basic security)
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "change-this-to-your-secret-2026")
+# Your secret (same as Pine input — keep in sync!)
+EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    # Check secret from header (we'll set this in TradingView and Render)
-    auth_header = request.headers.get('Authorization')
-    if auth_header != f"Bearer {WEBHOOK_SECRET}":
-        return jsonify({"error": "Unauthorized"}), 401
-
     try:
         payload = request.json
+        
+        # Security: check bearer_token field in JSON
+        received_token = payload.get('bearer_token')
+        if received_token != EXPECTED_TOKEN:
+            print(f"Unauthorized token: {received_token}")
+            return jsonify({"error": "Unauthorized"}), 401
+        
         received_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S CST")
         
-        log = f"[{received_time}] TEST WEBHOOK RECEIVED:\n"
+        log = f"[{received_time}] AUTHORIZED WEBHOOK RECEIVED:\n"
         log += f"Full Payload: {payload}\n"
         log += f"Symbol: {payload.get('symbol', 'N/A')}\n"
         log += f"Action: {payload.get('action', 'N/A')}\n"
         log += f"Quantity: {payload.get('quantity', 'N/A')} ({payload.get('quantity_type', 'N/A')})\n"
         log += f"Price: {payload.get('price', 'N/A')}\n"
         
-        print(log)  # Shows in Render logs
+        print(log)
         
         return jsonify({
-            "status": "test-received",
-            "message": "Webhook logged successfully - no real action taken",
-            "payload": payload
+            "status": "received",
+            "message": "Webhook processed successfully"
         }), 200
     
     except Exception as e:
