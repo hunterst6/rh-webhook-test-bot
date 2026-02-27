@@ -4,26 +4,26 @@ import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import traceback
 
 app = Flask(__name__)
 
-# === CONFIG (set these in Render Environment Variables for security) ===
-EXPECTED_TOKEN = "dragon-this-to-your-secret-2026"  # Must match your Pine script secretToken
+# === CONFIG (set these in Render Environment Variables) ===
+EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
-# Email config (add these as env vars on Render)
-EMAIL_SENDER = "yourgmail@gmail.com"          # Your Gmail address
-EMAIL_PASSWORD = "your-16-char-app-password"  # Gmail App Password (not regular password)
-EMAIL_RECIPIENT = "your-email@example.com"    # Where daily reports go
+# Email config from env vars
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "your-app-password-here")
+EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-# === PAPER TRADING LEDGER (in-memory — resets on restart) ===
+# === PAPER TRADING LEDGER ===
 portfolio = {
-    "cash": 20000.0,                          # Starting virtual capital
-    "positions": {},                          # e.g. {"DOGE": {"qty": 50000, "avg_price": 0.10}}
-    "trades": []                              # List of all simulated trades
+    "cash": 20000.0,
+    "positions": {},
+    "trades": []
 }
 
 def calculate_portfolio_value(last_price_map=None):
-    """Estimate total value (cash + positions). Uses last known price if available."""
     total = portfolio["cash"]
     for sym, pos in portfolio["positions"].items():
         price = last_price_map.get(sym, pos["avg_price"]) if last_price_map else pos["avg_price"]
@@ -50,22 +50,15 @@ def log_trade(action, symbol, qty, price, value):
 
 def send_daily_email():
     today = datetime.date.today().strftime("%Y-%m-%d")
-    report = f"9-Coin Fusion Paper Trading Daily Summary - {today}\n\n"
-    
-    report += f"Starting Cash: $20000.00\n"
-    report += f"Current Cash: ${portfolio['cash']:.2f}\n"
-    
-    report += "\nCurrent Positions:\n"
+    report = f"9-Coin Fusion Paper Trading Report - {today}\n\n"
+    report += f"Cash: ${portfolio['cash']:.2f}\n"
+    report += "Positions:\n"
     for sym, pos in portfolio["positions"].items():
-        report += f"  {sym}: {pos['qty']:.2f} coins @ avg ${pos['avg_price']:.6f}\n"
+        report += f"  {sym}: {pos['qty']:.2f} @ avg ${pos['avg_price']:.6f}\n"
     
-    total_value = calculate_portfolio_value()  # Approximate without current prices
-    report += f"\nEstimated Total Portfolio Value: ${total_value:.2f}\n"
-    
-    report += f"\nTotal Trades: {len(portfolio['trades'])}\n"
-    report += f"Recent Trades (last 5):\n"
-    for trade in portfolio["trades"][-5:]:
-        report += f"  {trade['time']} | {trade['action']} {trade['symbol']} | {trade['qty']:.2f} @ ${trade['price']:.6f}\n"
+    total_value = calculate_portfolio_value()
+    report += f"\nEstimated Total Value: ${total_value:.2f}\n"
+    report += f"Total Trades: {len(portfolio['trades'])}\n"
     
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
@@ -74,39 +67,42 @@ def send_daily_email():
     msg.attach(MIMEText(report, 'plain'))
 
     try:
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Starting SMTP debug connection to smtp.gmail.com:587")
         server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.set_debuglevel(1)  # FULL SMTP DEBUG OUTPUT
         server.starttls()
+        print("TLS started")
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        print("Login successful")
         server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
         server.quit()
-        print(f"Daily email sent to {EMAIL_RECIPIENT}")
+        print("Email sent successfully!")
     except Exception as e:
-        print(f"Email failed: {e}")
+        print(f"Email failed: {str(e)}")
+        traceback.print_exc()  # Full stack trace in logs
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         payload = request.json
         
-        # Security: check bearer_token inside JSON
         received_token = payload.get('bearer_token')
         if received_token != EXPECTED_TOKEN:
-            print(f"Unauthorized token received: {received_token}")
+            print(f"Unauthorized token: {received_token}")
             return jsonify({"error": "Unauthorized"}), 401
         
         action = payload.get('action')
         symbol_raw = payload.get('symbol', '')
-        symbol = symbol_raw.replace('-USD', '')  # Clean to DOGE, PEPE, etc.
+        symbol = symbol_raw.replace('-USD', '')
         price = float(payload.get('price', 0))
         
         if price <= 0:
-            return jsonify({"error": "Invalid or missing price"}), 400
+            return jsonify({"error": "Invalid price"}), 400
         
         if action == "buy":
             qty_cash = float(payload.get('quantity', 0))
             if qty_cash > portfolio["cash"]:
-                qty_cash = portfolio["cash"]  # Can't overspend
-            
+                qty_cash = portfolio["cash"]
             if qty_cash <= 0:
                 return jsonify({"status": "zero_buy"}), 200
             
@@ -130,41 +126,4 @@ def webhook():
                 return jsonify({"status": "no_position"}), 200
             
             pos = portfolio["positions"][symbol]
-            qty_percent = float(payload.get('quantity', 100)) / 100 if payload.get('quantity_type') == 'percent_of_equity' else 1.0
-            sell_qty = pos["qty"] * qty_percent
-            
-            sell_value = sell_qty * price
-            portfolio["cash"] += sell_value
-            pos["qty"] -= sell_qty
-            
-            if pos["qty"] <= 0:
-                del portfolio["positions"][symbol]
-            
-            log_trade("SELL", symbol, sell_qty, price, sell_value)
-        
-        # Optional: Send daily email manually for testing (remove later)
-        # if action == "sell":  # e.g., trigger on sells
-        #     send_daily_email()
-        
-        return jsonify({
-            "status": "paper_trade_processed",
-            "portfolio_summary": {
-                "cash": portfolio["cash"],
-                "positions": portfolio["positions"],
-                "total_value_estimate": calculate_portfolio_value({symbol: price})
-            }
-        }), 200
-    
-    except Exception as e:
-        print(f"Error processing webhook: {str(e)}")
-        return jsonify({"error": str(e)}), 400
-
-# Optional test route to trigger daily email manually (GET http://your-url/send-report)
-@app.route('/send-report', methods=['GET'])
-def manual_report():
-    send_daily_email()
-    return jsonify({"status": "daily_report_sent"}), 200
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+            qty_percent = float(payload.get('quantity', 100
