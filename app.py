@@ -11,9 +11,8 @@ app = Flask(__name__)
 # === CONFIG (set these in Render Environment Variables) ===
 EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
-# Email config from env vars
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "your-app-password-here")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
 # === PAPER TRADING LEDGER ===
@@ -67,19 +66,23 @@ def send_daily_email():
     msg.attach(MIMEText(report, 'plain'))
 
     try:
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Starting SMTP debug connection to smtp.gmail.com:587")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S CST')}] Starting SMTP debug connection...")
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.set_debuglevel(1)  # FULL SMTP DEBUG OUTPUT
+        server.ehlo()
         server.starttls()
-        print("TLS started")
+        server.ehlo()
+        print("Attempting login...")
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         print("Login successful")
+        print("Sending message...")
         server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
         server.quit()
-        print("Email sent successfully!")
+        print("Email sent successfully! Check inbox/spam/promotions.")
     except Exception as e:
         print(f"Email failed: {str(e)}")
-        traceback.print_exc()  # Full stack trace in logs
+        traceback.print_exc()
+        print("Debug info: Check env vars EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -155,7 +158,7 @@ def webhook():
 @app.route('/send-report', methods=['GET'])
 def manual_report():
     send_daily_email()
-    return jsonify({"status": "daily_report_attempted"}), 200
+    return jsonify({"status": "report_attempted"}), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
