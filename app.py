@@ -110,16 +110,16 @@ def send_daily_email():
         traceback.print_exc()
 
 # ──────────────────────────────────────────────
-# WEBHOOK ENDPOINT - PARSE RAW BODY ONLY
+# WEBHOOK ENDPOINT - PARSE RAW BODY ONLY (NO HEADER DEPENDENCY)
 # ──────────────────────────────────────────────
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # Log raw body for debug
+        # Log raw body for debug (this will show exactly what TradingView sent)
         raw_body = request.data.decode('utf-8', errors='ignore').strip()
         print(f"RAW BODY RECEIVED: {raw_body}")
         
-        # Parse JSON from raw body (ignore header completely)
+        # Parse JSON from raw body (ignore Content-Type completely)
         if not raw_body:
             print("Empty request body")
             return jsonify({"error": "Empty body"}), 400
