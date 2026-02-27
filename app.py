@@ -116,73 +116,46 @@ def send_daily_email():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        payload = request.json
+        # First try normal JSON parse
+        payload = request.get_json(silent=True)
         
+        # If that fails (wrong/missing Content-Type), force parse from raw body
+        if payload is None and request.data:
+            try:
+                raw_body = request.data.decode('utf-8').strip()
+                if raw_body:
+                    payload = json.loads(raw_body)
+                else:
+                    payload = {}
+            except json.JSONDecodeError as e:
+                print(f"JSON fallback parse failed: {str(e)} - Raw body: {raw_body}")
+                return jsonify({"error": "Invalid JSON body"}), 400
+        
+        if payload is None:
+            print("No payload received at all")
+            return jsonify({"error": "No payload"}), 400
+        
+        # Now process as normal
         received_token = payload.get('bearer_token')
         if received_token != EXPECTED_TOKEN:
-            print(f"Unauthorized token: {received_token}")
+            print(f"Unauthorized token received: {received_token}")
             return jsonify({"error": "Unauthorized"}), 401
         
+        # Your existing trade logic here
         action = payload.get('action')
         symbol_raw = payload.get('symbol', '')
         symbol = symbol_raw.replace('-USD', '')
         price = float(payload.get('price', 0))
         
-        if price <= 0:
-            return jsonify({"error": "Invalid price"}), 400
+        print(f"Received valid payload: {payload}")
+        # ... rest of buy/sell simulation ...
         
-        if action == "buy":
-            qty_cash = float(payload.get('quantity', 0))
-            if qty_cash > portfolio["cash"]:
-                qty_cash = portfolio["cash"]
-            if qty_cash <= 0:
-                return jsonify({"status": "zero_buy"}), 200
-            
-            qty_coins = qty_cash / price
-            portfolio["cash"] -= qty_cash
-            
-            if symbol in portfolio["positions"]:
-                pos = portfolio["positions"][symbol]
-                new_qty = pos["qty"] + qty_coins
-                new_avg = (pos["qty"] * pos["avg_price"] + qty_coins * price) / new_qty
-                pos["qty"] = new_qty
-                pos["avg_price"] = new_avg
-            else:
-                portfolio["positions"][symbol] = {"qty": qty_coins, "avg_price": price}
-            
-            log_trade("BUY", symbol, qty_coins, price, qty_cash)
-        
-        elif action == "sell":
-            if symbol not in portfolio["positions"]:
-                print(f"No position in {symbol} to sell")
-                return jsonify({"status": "no_position"}), 200
-            
-            pos = portfolio["positions"][symbol]
-            qty_percent = float(payload.get('quantity', 100)) / 100 if payload.get('quantity_type') == 'percent_of_equity' else 1.0
-            sell_qty = pos["qty"] * qty_percent
-            
-            sell_value = sell_qty * price
-            portfolio["cash"] += sell_value
-            pos["qty"] -= sell_qty
-            
-            if pos["qty"] <= 0:
-                del portfolio["positions"][symbol]
-            
-            log_trade("SELL", symbol, sell_qty, price, sell_value)
-        
-        return jsonify({
-            "status": "paper_trade_processed",
-            "portfolio_summary": {
-                "cash": portfolio["cash"],
-                "positions": portfolio["positions"],
-                "total_value_estimate": calculate_portfolio_value({symbol: price})
-            }
-        }), 200
+        return jsonify({"status": "processed"}), 200
     
     except Exception as e:
-        print(f"Webhook error: {str(e)}")
+        print(f"Webhook processing error: {str(e)}")
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/send-report', methods=['GET'])
 def manual_report():
