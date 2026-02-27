@@ -9,17 +9,30 @@ import traceback
 
 app = Flask(__name__)
 
-# === CONFIG ===
+# ──────────────────────────────────────────────
+# CONFIG FROM ENV VARS
+# ──────────────────────────────────────────────
 EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
+EMAIL_SENDER    = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
+EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-# Persistent disk path (match what you set in Render Disk mount path)
-LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if you kept default
+# Persistent disk path (match your Render Disk mount path)
+LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if that's your mount path
 
-# === LOAD / SAVE LEDGER ===
+# ──────────────────────────────────────────────
+# LEDGER STATE
+# ──────────────────────────────────────────────
+portfolio = {
+    "cash": 20000.0,
+    "positions": {},          # {"DOGE": {"qty": 50000, "avg_price": 0.10}}
+    "trades": []              # list of trade dicts
+}
+
+# ──────────────────────────────────────────────
+# LOAD / SAVE LEDGER
+# ──────────────────────────────────────────────
 def load_ledger():
     global portfolio
     if os.path.exists(LEDGER_FILE):
@@ -35,21 +48,19 @@ def load_ledger():
 
 def save_ledger():
     try:
-        os.makedirs(os.path.dirname(LEDGER_FILE), exist_ok=True)  # Create dir if missing
+        os.makedirs(os.path.dirname(LEDGER_FILE), exist_ok=True)
         with open(LEDGER_FILE, 'w') as f:
             json.dump(portfolio, f, indent=4)
         print(f"Saved ledger to {LEDGER_FILE}")
     except Exception as e:
         print(f"Failed to save ledger: {e}")
 
-# Initial ledger
-portfolio = {
-    "cash": 20000.0,
-    "positions": {},
-    "trades": []
-}
-load_ledger()  # Load on startup
+# Load on startup
+load_ledger()
 
+# ──────────────────────────────────────────────
+# HELPERS
+# ──────────────────────────────────────────────
 def calculate_portfolio_value(last_price_map=None):
     total = portfolio["cash"]
     for sym, pos in portfolio["positions"].items():
@@ -75,8 +86,11 @@ def log_trade(action, symbol, qty, price, value):
     print(f"Cash: ${portfolio['cash']:.2f} | Positions: {portfolio['positions']}")
     print(f"Estimated Total Value: ${calculate_portfolio_value({symbol: price}):.2f}")
     
-    save_ledger()  # Save after every trade
+    save_ledger()
 
+# ──────────────────────────────────────────────
+# EMAIL REPORT
+# ──────────────────────────────────────────────
 def send_daily_email():
     today = datetime.date.today().strftime("%Y-%m-%d")
     report = f"9-Coin Fusion Paper Trading Report - {today}\n\n"
@@ -96,16 +110,9 @@ def send_daily_email():
     msg.attach(MIMEText(report, 'plain'))
 
     try:
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S CST')}] Starting SMTP...")
         server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.set_debuglevel(1)
-        server.ehlo()
         server.starttls()
-        server.ehlo()
-        print("Attempting login...")
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        print("Login successful")
-        print("Sending message...")
         server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
         server.quit()
         print("Email sent successfully!")
@@ -113,54 +120,124 @@ def send_daily_email():
         print(f"Email failed: {str(e)}")
         traceback.print_exc()
 
+# ──────────────────────────────────────────────
+# WEBHOOK ENDPOINT
+# ──────────────────────────────────────────────
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # First try normal JSON parse
-        payload = request.get_json(silent=True)
+        # Force parse JSON (handles TradingView missing Content-Type)
+        payload = request.get_json(force=True, silent=True)
         
-        # If that fails (wrong/missing Content-Type), force parse from raw body
         if payload is None and request.data:
             try:
                 raw_body = request.data.decode('utf-8').strip()
-                if raw_body:
-                    payload = json.loads(raw_body)
-                else:
-                    payload = {}
+                payload = json.loads(raw_body) if raw_body else {}
             except json.JSONDecodeError as e:
-                print(f"JSON fallback parse failed: {str(e)} - Raw body: {raw_body}")
-                return jsonify({"error": "Invalid JSON body"}), 400
+                print(f"JSON fallback parse failed: {str(e)} - Raw: {request.data}")
+                return jsonify({"error": "Invalid JSON"}), 400
         
         if payload is None:
-            print("No payload received at all")
+            print("No payload received")
             return jsonify({"error": "No payload"}), 400
         
-        # Now process as normal
-        received_token = payload.get('bearer_token')
+        # Check token from header OR body
+        received_token = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            received_token = auth_header[7:].strip()
+        if received_token is None:
+            received_token = payload.get('bearer_token')
+        
         if received_token != EXPECTED_TOKEN:
-            print(f"Unauthorized token received: {received_token}")
+            print(f"Unauthorized token: {received_token}")
             return jsonify({"error": "Unauthorized"}), 401
         
-        # Your existing trade logic here
+        # Process trade
         action = payload.get('action')
         symbol_raw = payload.get('symbol', '')
         symbol = symbol_raw.replace('-USD', '')
         price = float(payload.get('price', 0))
         
-        print(f"Received valid payload: {payload}")
-        # ... rest of buy/sell simulation ...
+        if price <= 0:
+            return jsonify({"error": "Invalid price"}), 400
+        
+        print(f"Processing {action} for {symbol} @ ${price}")
+        
+        if action == "buy":
+            qty_cash = float(payload.get('quantity', 0))
+            if qty_cash > portfolio["cash"]:
+                qty_cash = portfolio["cash"]
+            if qty_cash <= 0:
+                return jsonify({"status": "zero_buy"}), 200
+            
+            qty_coins = qty_cash / price
+            portfolio["cash"] -= qty_cash
+            
+            if symbol in portfolio["positions"]:
+                pos = portfolio["positions"][symbol]
+                new_qty = pos["qty"] + qty_coins
+                new_avg = (pos["qty"] * pos["avg_price"] + qty_coins * price) / new_qty
+                pos["qty"] = new_qty
+                pos["avg_price"] = new_avg
+            else:
+                portfolio["positions"][symbol] = {"qty": qty_coins, "avg_price": price}
+            
+            log_trade("BUY", symbol, qty_coins, price, qty_cash)
+        
+        elif action == "sell":
+            if symbol not in portfolio["positions"]:
+                print(f"No position in {symbol} to sell")
+                return jsonify({"status": "no_position"}), 200
+            
+            pos = portfolio["positions"][symbol]
+            qty_percent = float(payload.get('quantity', 100)) / 100 if payload.get('quantity_type') == 'percent_of_equity' else 1.0
+            sell_qty = pos["qty"] * qty_percent
+            
+            sell_value = sell_qty * price
+            portfolio["cash"] += sell_value
+            pos["qty"] -= sell_qty
+            
+            if pos["qty"] <= 0:
+                del portfolio["positions"][symbol]
+            
+            log_trade("SELL", symbol, sell_qty, price, sell_value)
         
         return jsonify({"status": "processed"}), 200
     
     except Exception as e:
-        print(f"Webhook processing error: {str(e)}")
+        print(f"Webhook error: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# ──────────────────────────────────────────────
+# MANUAL REPORT TRIGGER (for testing)
+# ──────────────────────────────────────────────
 @app.route('/send-report', methods=['GET'])
 def manual_report():
     send_daily_email()
-    return jsonify({"status": "report_attempted"}), 200
+    return jsonify({"status": "report_sent"}), 200
+
+# ──────────────────────────────────────────────
+# OPTIONAL RESET ENDPOINT (remove if not wanted)
+# ──────────────────────────────────────────────
+@app.route('/reset-ledger', methods=['GET'])
+def reset_ledger():
+    global portfolio
+    try:
+        if os.path.exists(LEDGER_FILE):
+            os.remove(LEDGER_FILE)
+            print(f"Deleted ledger file: {LEDGER_FILE}")
+        portfolio = {
+            "cash": 20000.0,
+            "positions": {},
+            "trades": []
+        }
+        save_ledger()
+        return jsonify({"status": "ledger_reset", "cash": 20000.0}), 200
+    except Exception as e:
+        print(f"Reset failed: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
