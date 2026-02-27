@@ -110,31 +110,25 @@ def send_daily_email():
         traceback.print_exc()
 
 # ──────────────────────────────────────────────
-# WEBHOOK ENDPOINT - FORCE JSON PARSE
+# WEBHOOK ENDPOINT - FORCE PARSE JSON FROM BODY
 # ──────────────────────────────────────────────
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # Step 1: Try normal JSON parse
-        payload = request.get_json(silent=True)
+        # Log raw body for debug
+        raw_body = request.data.decode('utf-8', errors='ignore').strip()
+        print(f"RAW BODY RECEIVED: {raw_body}")
         
-        # Step 2: If failed, force parse from raw body (ignores Content-Type)
-        if payload is None:
-            raw_body = request.data.decode('utf-8', errors='ignore').strip()
-            print(f"Raw request body received: {raw_body}")  # LOG RAW BODY FOR DEBUG
-            if raw_body:
-                try:
-                    payload = json.loads(raw_body)
-                except json.JSONDecodeError as e:
-                    print(f"JSON parse from raw body failed: {str(e)}")
-                    return jsonify({"error": "Invalid JSON"}), 400
-            else:
-                print("Empty request body")
-                return jsonify({"error": "Empty body"}), 400
-        
-        if payload is None:
-            print("No payload after all attempts")
-            return jsonify({"error": "No payload"}), 400
+        # Parse JSON from raw body (ignore Content-Type completely)
+        if raw_body:
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError as e:
+                print(f"JSON parse failed: {str(e)} - Raw: {raw_body}")
+                return jsonify({"error": "Invalid JSON"}), 400
+        else:
+            print("Empty request body")
+            return jsonify({"error": "Empty body"}), 400
         
         # Token check (body or header)
         received_token = None
@@ -206,7 +200,7 @@ def webhook():
         return jsonify({"error": str(e)}), 500
 
 # ──────────────────────────────────────────────
-# MANUAL REPORT & RESET
+# MANUAL ENDPOINTS
 # ──────────────────────────────────────────────
 @app.route('/send-report', methods=['GET'])
 def manual_report():
