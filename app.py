@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import os
 import datetime
+import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -8,19 +9,46 @@ import traceback
 
 app = Flask(__name__)
 
-# === CONFIG (set these in Render Environment Variables) ===
+# === CONFIG ===
 EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-# === PAPER TRADING LEDGER ===
+# Persistent disk path (match what you set in Render Disk mount path)
+LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if you kept default
+
+# === LOAD / SAVE LEDGER ===
+def load_ledger():
+    global portfolio
+    if os.path.exists(LEDGER_FILE):
+        try:
+            with open(LEDGER_FILE, 'r') as f:
+                loaded = json.load(f)
+                portfolio.update(loaded)
+            print(f"Loaded persistent ledger from {LEDGER_FILE}")
+        except Exception as e:
+            print(f"Failed to load ledger: {e}. Starting fresh.")
+    else:
+        print(f"No ledger file at {LEDGER_FILE} - starting fresh")
+
+def save_ledger():
+    try:
+        os.makedirs(os.path.dirname(LEDGER_FILE), exist_ok=True)  # Create dir if missing
+        with open(LEDGER_FILE, 'w') as f:
+            json.dump(portfolio, f, indent=4)
+        print(f"Saved ledger to {LEDGER_FILE}")
+    except Exception as e:
+        print(f"Failed to save ledger: {e}")
+
+# Initial ledger
 portfolio = {
     "cash": 20000.0,
     "positions": {},
     "trades": []
 }
+load_ledger()  # Load on startup
 
 def calculate_portfolio_value(last_price_map=None):
     total = portfolio["cash"]
@@ -46,6 +74,8 @@ def log_trade(action, symbol, qty, price, value):
     print(f"[{timestamp}] {action.upper()} {symbol} | Qty: {qty:.6f} @ ${price:.6f} | Value: ${value:.2f}")
     print(f"Cash: ${portfolio['cash']:.2f} | Positions: {portfolio['positions']}")
     print(f"Estimated Total Value: ${calculate_portfolio_value({symbol: price}):.2f}")
+    
+    save_ledger()  # Save after every trade
 
 def send_daily_email():
     today = datetime.date.today().strftime("%Y-%m-%d")
@@ -66,9 +96,9 @@ def send_daily_email():
     msg.attach(MIMEText(report, 'plain'))
 
     try:
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S CST')}] Starting SMTP debug connection...")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S CST')}] Starting SMTP...")
         server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.set_debuglevel(1)  # FULL SMTP DEBUG OUTPUT
+        server.set_debuglevel(1)
         server.ehlo()
         server.starttls()
         server.ehlo()
@@ -78,11 +108,10 @@ def send_daily_email():
         print("Sending message...")
         server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
         server.quit()
-        print("Email sent successfully! Check inbox/spam/promotions.")
+        print("Email sent successfully!")
     except Exception as e:
         print(f"Email failed: {str(e)}")
         traceback.print_exc()
-        print("Debug info: Check env vars EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
