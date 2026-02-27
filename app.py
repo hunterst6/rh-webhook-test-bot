@@ -10,7 +10,7 @@ import traceback
 app = Flask(__name__)
 
 # ──────────────────────────────────────────────
-# CONFIG FROM ENV VARS
+# CONFIG
 # ──────────────────────────────────────────────
 EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
@@ -18,21 +18,17 @@ EMAIL_SENDER    = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
 EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-# Persistent disk path (match your Render Disk mount path)
-LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if that's your mount path
+LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if your mount path is different
 
 # ──────────────────────────────────────────────
 # LEDGER STATE
 # ──────────────────────────────────────────────
 portfolio = {
     "cash": 20000.0,
-    "positions": {},          # {"DOGE": {"qty": 50000, "avg_price": 0.10}}
-    "trades": []              # list of trade dicts
+    "positions": {},
+    "trades": []
 }
 
-# ──────────────────────────────────────────────
-# LOAD / SAVE LEDGER
-# ──────────────────────────────────────────────
 def load_ledger():
     global portfolio
     if os.path.exists(LEDGER_FILE):
@@ -55,12 +51,8 @@ def save_ledger():
     except Exception as e:
         print(f"Failed to save ledger: {e}")
 
-# Load on startup
 load_ledger()
 
-# ──────────────────────────────────────────────
-# HELPERS
-# ──────────────────────────────────────────────
 def calculate_portfolio_value(last_price_map=None):
     total = portfolio["cash"]
     for sym, pos in portfolio["positions"].items():
@@ -88,9 +80,6 @@ def log_trade(action, symbol, qty, price, value):
     
     save_ledger()
 
-# ──────────────────────────────────────────────
-# EMAIL REPORT
-# ──────────────────────────────────────────────
 def send_daily_email():
     today = datetime.date.today().strftime("%Y-%m-%d")
     report = f"9-Coin Fusion Paper Trading Report - {today}\n\n"
@@ -121,27 +110,33 @@ def send_daily_email():
         traceback.print_exc()
 
 # ──────────────────────────────────────────────
-# WEBHOOK ENDPOINT
+# WEBHOOK ENDPOINT - FORCE JSON PARSE
 # ──────────────────────────────────────────────
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # Force parse JSON (handles TradingView missing Content-Type)
-        payload = request.get_json(force=True, silent=True)
+        # Step 1: Try normal JSON parse
+        payload = request.get_json(silent=True)
         
-        if payload is None and request.data:
-            try:
-                raw_body = request.data.decode('utf-8').strip()
-                payload = json.loads(raw_body) if raw_body else {}
-            except json.JSONDecodeError as e:
-                print(f"JSON fallback parse failed: {str(e)} - Raw: {request.data}")
-                return jsonify({"error": "Invalid JSON"}), 400
+        # Step 2: If failed, force parse from raw body (ignores Content-Type)
+        if payload is None:
+            raw_body = request.data.decode('utf-8', errors='ignore').strip()
+            print(f"Raw request body received: {raw_body}")  # LOG RAW BODY FOR DEBUG
+            if raw_body:
+                try:
+                    payload = json.loads(raw_body)
+                except json.JSONDecodeError as e:
+                    print(f"JSON parse from raw body failed: {str(e)}")
+                    return jsonify({"error": "Invalid JSON"}), 400
+            else:
+                print("Empty request body")
+                return jsonify({"error": "Empty body"}), 400
         
         if payload is None:
-            print("No payload received")
+            print("No payload after all attempts")
             return jsonify({"error": "No payload"}), 400
         
-        # Check token from header OR body
+        # Token check (body or header)
         received_token = None
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
@@ -211,16 +206,13 @@ def webhook():
         return jsonify({"error": str(e)}), 500
 
 # ──────────────────────────────────────────────
-# MANUAL REPORT TRIGGER (for testing)
+# MANUAL REPORT & RESET
 # ──────────────────────────────────────────────
 @app.route('/send-report', methods=['GET'])
 def manual_report():
     send_daily_email()
     return jsonify({"status": "report_sent"}), 200
 
-# ──────────────────────────────────────────────
-# OPTIONAL RESET ENDPOINT (remove if not wanted)
-# ──────────────────────────────────────────────
 @app.route('/reset-ledger', methods=['GET'])
 def reset_ledger():
     global portfolio
