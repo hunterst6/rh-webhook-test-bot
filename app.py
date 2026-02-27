@@ -126,4 +126,37 @@ def webhook():
                 return jsonify({"status": "no_position"}), 200
             
             pos = portfolio["positions"][symbol]
-            qty_percent = float(payload.get('quantity', 100
+            qty_percent = float(payload.get('quantity', 100)) / 100 if payload.get('quantity_type') == 'percent_of_equity' else 1.0
+            sell_qty = pos["qty"] * qty_percent
+            
+            sell_value = sell_qty * price
+            portfolio["cash"] += sell_value
+            pos["qty"] -= sell_qty
+            
+            if pos["qty"] <= 0:
+                del portfolio["positions"][symbol]
+            
+            log_trade("SELL", symbol, sell_qty, price, sell_value)
+        
+        return jsonify({
+            "status": "paper_trade_processed",
+            "portfolio_summary": {
+                "cash": portfolio["cash"],
+                "positions": portfolio["positions"],
+                "total_value_estimate": calculate_portfolio_value({symbol: price})
+            }
+        }), 200
+    
+    except Exception as e:
+        print(f"Webhook error: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/send-report', methods=['GET'])
+def manual_report():
+    send_daily_email()
+    return jsonify({"status": "daily_report_attempted"}), 200
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
