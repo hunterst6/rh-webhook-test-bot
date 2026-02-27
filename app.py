@@ -110,7 +110,7 @@ def send_daily_email():
         traceback.print_exc()
 
 # ──────────────────────────────────────────────
-# WEBHOOK ENDPOINT - FORCE PARSE JSON FROM BODY
+# WEBHOOK ENDPOINT - PARSE RAW BODY ONLY
 # ──────────────────────────────────────────────
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -119,16 +119,16 @@ def webhook():
         raw_body = request.data.decode('utf-8', errors='ignore').strip()
         print(f"RAW BODY RECEIVED: {raw_body}")
         
-        # Parse JSON from raw body (ignore Content-Type completely)
-        if raw_body:
-            try:
-                payload = json.loads(raw_body)
-            except json.JSONDecodeError as e:
-                print(f"JSON parse failed: {str(e)} - Raw: {raw_body}")
-                return jsonify({"error": "Invalid JSON"}), 400
-        else:
+        # Parse JSON from raw body (ignore header completely)
+        if not raw_body:
             print("Empty request body")
             return jsonify({"error": "Empty body"}), 400
+        
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError as e:
+            print(f"JSON parse failed: {str(e)} - Raw body: {raw_body}")
+            return jsonify({"error": "Invalid JSON"}), 400
         
         # Token check (body or header)
         received_token = None
