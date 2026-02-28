@@ -18,21 +18,17 @@ EMAIL_SENDER    = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
 EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-# Persistent ledger file path — must match your Render Disk mount path
-LEDGER_FILE = "/data/portfolio.json"   # Change to "/var/data/portfolio.json" if needed
+LEDGER_FILE = "/data/portfolio.json"  # confirmed from your disk mount
 
 # ──────────────────────────────────────────────
-# GLOBAL PORTFOLIO STATE (in-memory + persistent)
+# GLOBAL PORTFOLIO STATE
 # ──────────────────────────────────────────────
 portfolio = {
     "cash": 20000.0,
-    "positions": {},          # e.g. {"DOGE": {"qty": 50000, "avg_price": 0.10}}
-    "trades": []              # list of trade dictionaries
+    "positions": {},
+    "trades": []
 }
 
-# ──────────────────────────────────────────────
-# LEDGER PERSISTENCE
-# ──────────────────────────────────────────────
 def load_ledger():
     global portfolio
     print(f"[LEDGER] Loading from: {LEDGER_FILE}")
@@ -61,18 +57,43 @@ def save_ledger():
     except Exception as e:
         print(f"[LEDGER] Save failed: {str(e)}")
 
-# Load on startup
 load_ledger()
 
-# ──────────────────────────────────────────────
-# PORTFOLIO HELPERS
-# ──────────────────────────────────────────────
 def calculate_portfolio_value(last_price_map=None):
     total = portfolio["cash"]
     for sym, pos in portfolio["positions"].items():
         price = last_price_map.get(sym, pos["avg_price"]) if last_price_map else pos["avg_price"]
         total += pos["qty"] * price
     return total
+
+def send_trade_email(action, symbol, qty, price, value):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S CST")
+    subject = f"Trade Executed: {action.upper()} {symbol} - {timestamp}"
+    body = f"{action.upper()} {symbol} executed\n\n"
+    body += f"Time: {timestamp}\n"
+    body += f"Quantity: {qty:.6f}\n"
+    body += f"Price: ${price:.6f}\n"
+    body += f"Value: ${value:.2f}\n"
+    body += f"Cash after: ${portfolio['cash']:.2f}\n"
+    body += f"Positions: {portfolio['positions']}\n"
+    body += f"Total Value: ${calculate_portfolio_value():.2f}\n"
+    
+    msg = MIMEMultipart()
+    msg['From'] = EMAIL_SENDER
+    msg['To'] = EMAIL_RECIPIENT
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
+        server.quit()
+        print(f"[EMAIL] Instant trade email sent: {subject}")
+    except Exception as e:
+        print(f"[EMAIL] Trade email failed: {str(e)}")
+        traceback.print_exc()
 
 def log_trade(action, symbol, qty, price, value):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S CST")
@@ -93,13 +114,13 @@ def log_trade(action, symbol, qty, price, value):
     print(f"Estimated Total Value: ${calculate_portfolio_value({symbol: price}):.2f}")
     
     save_ledger()
+    
+    # Send instant email notification
+    send_trade_email(action, symbol, qty, price, value)
 
-# ──────────────────────────────────────────────
-# EMAIL REPORT FUNCTION
-# ──────────────────────────────────────────────
 def send_daily_email():
     today = datetime.date.today().strftime("%Y-%m-%d")
-    report = f"9-Coin Fusion Paper Trading Report - {today}\n\n"
+    report = f"Daily Paper Trade Report - {today}\n\n"
     report += f"Cash: ${portfolio['cash']:.2f}\n"
     report += "Positions:\n"
     for sym, pos in portfolio["positions"].items():
@@ -121,9 +142,9 @@ def send_daily_email():
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
         server.quit()
-        print("Email sent successfully!")
+        print("Daily email sent successfully!")
     except Exception as e:
-        print(f"Email failed: {str(e)}")
+        print(f"Daily email failed: {str(e)}")
         traceback.print_exc()
 
 # ──────────────────────────────────────────────
@@ -132,11 +153,9 @@ def send_daily_email():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # Log raw body for debug
         raw_body = request.data.decode('utf-8', errors='ignore').strip()
         print(f"RAW BODY RECEIVED: {raw_body}")
         
-        # Parse JSON from raw body (ignore Content-Type completely)
         if not raw_body:
             print("Empty request body")
             return jsonify({"error": "Empty body"}), 400
@@ -147,7 +166,6 @@ def webhook():
             print(f"JSON parse failed: {str(e)} - Raw body: {raw_body}")
             return jsonify({"error": "Invalid JSON"}), 400
         
-        # Token check (body or header)
         received_token = None
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
@@ -159,7 +177,6 @@ def webhook():
             print(f"Unauthorized token: {received_token}")
             return jsonify({"error": "Unauthorized"}), 401
         
-        # Process trade
         action = payload.get('action')
         symbol_raw = payload.get('symbol', '')
         symbol = symbol_raw.replace('-USD', '')
@@ -230,21 +247,21 @@ def reset_ledger():
     try:
         if os.path.exists(LEDGER_FILE):
             os.remove(LEDGER_FILE)
-            print(f"[RESET] Deleted ledger file: {LEDGER_FILE}")
+            print(f"Deleted ledger file: {LEDGER_FILE}")
         portfolio = {
             "cash": 20000.0,
             "positions": {},
             "trades": []
         }
         save_ledger()
-        print("[RESET] Ledger reset to $20,000 cash, empty positions and trades")
+        print("Ledger reset to $20,000 cash, empty positions and trades")
         return jsonify({
             "status": "ledger_reset_success",
             "new_cash": 20000.0,
-            "message": "Portfolio reset to initial state ($20,000 cash, no positions/trades)"
+            "message": "Portfolio reset to initial state"
         }), 200
     except Exception as e:
-        print(f"[RESET] Failed: {str(e)}")
+        print(f"Reset failed: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
