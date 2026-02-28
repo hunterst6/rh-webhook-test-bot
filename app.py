@@ -9,20 +9,16 @@ import traceback
 
 app = Flask(__name__)
 
-# ──────────────────────────────────────────────
 # CONFIG
-# ──────────────────────────────────────────────
 EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
 EMAIL_SENDER    = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
 EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if your mount path is different
+LEDGER_FILE = "/data/portfolio.json"  # or "/var/data/portfolio.json"
 
-# ──────────────────────────────────────────────
 # LEDGER STATE
-# ──────────────────────────────────────────────
 portfolio = {
     "cash": 20000.0,
     "positions": {},
@@ -110,7 +106,7 @@ def send_daily_email():
         traceback.print_exc()
 
 # ──────────────────────────────────────────────
-# WEBHOOK ENDPOINT - PARSE RAW BODY ONLY
+# WEBHOOK ENDPOINT - RAW BODY PARSE ONLY
 # ──────────────────────────────────────────────
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -119,7 +115,7 @@ def webhook():
         raw_body = request.data.decode('utf-8', errors='ignore').strip()
         print(f"RAW BODY RECEIVED: {raw_body}")
         
-        # Parse JSON from raw body (ignore Content-Type completely)
+        # Parse JSON from raw body (ignore headers completely)
         if not raw_body:
             print("Empty request body")
             return jsonify({"error": "Empty body"}), 400
