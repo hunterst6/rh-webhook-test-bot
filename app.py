@@ -9,16 +9,20 @@ import traceback
 
 app = Flask(__name__)
 
+# ──────────────────────────────────────────────
 # CONFIG
+# ──────────────────────────────────────────────
 EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
 EMAIL_SENDER    = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
 EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-LEDGER_FILE = "/data/portfolio.json"  # or "/var/data/portfolio.json"
+LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if your mount path is different
 
+# ──────────────────────────────────────────────
 # LEDGER STATE
+# ──────────────────────────────────────────────
 portfolio = {
     "cash": 20000.0,
     "positions": {},
@@ -115,7 +119,7 @@ def webhook():
         raw_body = request.data.decode('utf-8', errors='ignore').strip()
         print(f"RAW BODY RECEIVED: {raw_body}")
         
-        # Parse JSON from raw body (ignore headers completely)
+        # Parse JSON from raw body (ignore header completely)
         if not raw_body:
             print("Empty request body")
             return jsonify({"error": "Empty body"}), 400
@@ -216,9 +220,15 @@ def reset_ledger():
             "trades": []
         }
         save_ledger()
-        return jsonify({"status": "ledger_reset", "cash": 20000.0}), 200
+        print("Ledger reset to $20,000 cash, empty positions and trades")
+        return jsonify({
+            "status": "ledger_reset_success",
+            "new_cash": 20000.0,
+            "message": "Portfolio reset to initial state"
+        }), 200
     except Exception as e:
         print(f"Reset failed: {str(e)}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
