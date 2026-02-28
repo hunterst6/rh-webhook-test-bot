@@ -10,7 +10,7 @@ import traceback
 app = Flask(__name__)
 
 # ──────────────────────────────────────────────
-# CONFIG
+# CONFIGURATION FROM ENVIRONMENT VARIABLES
 # ──────────────────────────────────────────────
 EXPECTED_TOKEN = os.environ.get("WEBHOOK_SECRET", "dragon-this-to-your-secret-2026")
 
@@ -18,41 +18,55 @@ EMAIL_SENDER    = os.environ.get("EMAIL_SENDER", "hunterst1234@gmail.com")
 EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "hunterst6@icloud.com")
 
-LEDGER_FILE = "/data/portfolio.json"  # Change to "/var/data/portfolio.json" if your mount path is different
+# Persistent ledger file path — must match your Render Disk mount path
+LEDGER_FILE = "/data/portfolio.json"   # Change to "/var/data/portfolio.json" if needed
 
 # ──────────────────────────────────────────────
-# LEDGER STATE
+# GLOBAL PORTFOLIO STATE (in-memory + persistent)
 # ──────────────────────────────────────────────
 portfolio = {
     "cash": 20000.0,
-    "positions": {},
-    "trades": []
+    "positions": {},          # e.g. {"DOGE": {"qty": 50000, "avg_price": 0.10}}
+    "trades": []              # list of trade dictionaries
 }
 
+# ──────────────────────────────────────────────
+# LEDGER PERSISTENCE
+# ──────────────────────────────────────────────
 def load_ledger():
     global portfolio
+    print(f"[LEDGER] Loading from: {LEDGER_FILE}")
+    print(f"[LEDGER] Directory exists? {os.path.exists(os.path.dirname(LEDGER_FILE))}")
+    print(f"[LEDGER] File exists? {os.path.exists(LEDGER_FILE)}")
+    
     if os.path.exists(LEDGER_FILE):
         try:
             with open(LEDGER_FILE, 'r') as f:
                 loaded = json.load(f)
                 portfolio.update(loaded)
-            print(f"Loaded persistent ledger from {LEDGER_FILE}")
+            print(f"[LEDGER] Loaded successfully: {len(portfolio['trades'])} trades, "
+                  f"{len(portfolio['positions'])} positions")
         except Exception as e:
-            print(f"Failed to load ledger: {e}. Starting fresh.")
+            print(f"[LEDGER] Load failed: {str(e)}. Starting fresh.")
     else:
-        print(f"No ledger file at {LEDGER_FILE} - starting fresh")
+        print("[LEDGER] No ledger file found — starting fresh")
 
 def save_ledger():
+    print(f"[LEDGER] Saving to: {LEDGER_FILE}")
     try:
         os.makedirs(os.path.dirname(LEDGER_FILE), exist_ok=True)
         with open(LEDGER_FILE, 'w') as f:
             json.dump(portfolio, f, indent=4)
-        print(f"Saved ledger to {LEDGER_FILE}")
+        print(f"[LEDGER] Save successful — file exists now? {os.path.exists(LEDGER_FILE)}")
     except Exception as e:
-        print(f"Failed to save ledger: {e}")
+        print(f"[LEDGER] Save failed: {str(e)}")
 
+# Load on startup
 load_ledger()
 
+# ──────────────────────────────────────────────
+# PORTFOLIO HELPERS
+# ──────────────────────────────────────────────
 def calculate_portfolio_value(last_price_map=None):
     total = portfolio["cash"]
     for sym, pos in portfolio["positions"].items():
@@ -80,6 +94,9 @@ def log_trade(action, symbol, qty, price, value):
     
     save_ledger()
 
+# ──────────────────────────────────────────────
+# EMAIL REPORT FUNCTION
+# ──────────────────────────────────────────────
 def send_daily_email():
     today = datetime.date.today().strftime("%Y-%m-%d")
     report = f"9-Coin Fusion Paper Trading Report - {today}\n\n"
@@ -110,7 +127,7 @@ def send_daily_email():
         traceback.print_exc()
 
 # ──────────────────────────────────────────────
-# WEBHOOK ENDPOINT - RAW BODY PARSE ONLY
+# WEBHOOK ENDPOINT (RAW BODY PARSE ONLY)
 # ──────────────────────────────────────────────
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -119,7 +136,7 @@ def webhook():
         raw_body = request.data.decode('utf-8', errors='ignore').strip()
         print(f"RAW BODY RECEIVED: {raw_body}")
         
-        # Parse JSON from raw body (ignore header completely)
+        # Parse JSON from raw body (ignore Content-Type completely)
         if not raw_body:
             print("Empty request body")
             return jsonify({"error": "Empty body"}), 400
@@ -213,21 +230,21 @@ def reset_ledger():
     try:
         if os.path.exists(LEDGER_FILE):
             os.remove(LEDGER_FILE)
-            print(f"Deleted ledger file: {LEDGER_FILE}")
+            print(f"[RESET] Deleted ledger file: {LEDGER_FILE}")
         portfolio = {
             "cash": 20000.0,
             "positions": {},
             "trades": []
         }
         save_ledger()
-        print("Ledger reset to $20,000 cash, empty positions and trades")
+        print("[RESET] Ledger reset to $20,000 cash, empty positions and trades")
         return jsonify({
             "status": "ledger_reset_success",
             "new_cash": 20000.0,
-            "message": "Portfolio reset to initial state"
+            "message": "Portfolio reset to initial state ($20,000 cash, no positions/trades)"
         }), 200
     except Exception as e:
-        print(f"Reset failed: {str(e)}")
+        print(f"[RESET] Failed: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
